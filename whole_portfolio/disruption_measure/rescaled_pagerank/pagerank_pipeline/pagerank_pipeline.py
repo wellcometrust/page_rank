@@ -5,13 +5,9 @@ from datetime import datetime, timezone
 import awswrangler as wr
 import polars as pl
 
-from whole_portfolio.disruption_measure.src.edge_list_loader.data_processor import (
-    PageRankDataProcessor,
-)
-from whole_portfolio.disruption_measure.src.graph_metrics.run_pagerank import PageRank
-from whole_portfolio.disruption_measure.src.graph_metrics.time_normalise import (
-    TimeNormalise,
-)
+from .edge_list_loader.data_processor import PageRankDataProcessor
+from .graph_metrics.run_pagerank import PageRank
+from .graph_metrics.time_normalise import TimeNormalise
 
 
 def parse_args():
