@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["rescaled_pagerank"]
+packages = ["pagerank_pipeline"]
