@@ -42,10 +42,23 @@ conda activate gt
 Then run PageRank including any args you may wish to alter from default:
 
 ```bash
-python -m whole_portfolio.disruption_measure.src.pagerank_pipeline \
+python -m whole_portfolio.disruption_measure.rescaled_pagerank.pagerank_pipeline.pagerank_pipeline \
     --save-locally \
     --time-normalise \
     --test
 ```
 
 In this example, I am running PageRank in test mode. I am using the --save-locally argument which saves the data after the initial processing step. Should I wish to alter any pagerank parameters after I can run again with the --resume-locally argument without having to reprocess the data.
+
+## UV usage
+
+First you need to install graph-tool via a package manager like Homebrew or apt:
+```bash
+brew install graph-tool
+```
+
+Then, you need to set the `PYTHONPATH` environment variable to include the path to the graph-tool Python bindings. You can do this by adding the following line to your shell configuration file (e.g., `~/.bashrc`, `~/.zshrc`, etc.):
+
+```bash
+export PYTHONPATH="/opt/homebrew/Cellar/graph-tool/2.98/libexec/lib/python3.13/site-packages:/opt/homebrew/Cellar/graph-tool/2.98/lib/python3.13/site-packages:$PYTHONPATH"
+``` 

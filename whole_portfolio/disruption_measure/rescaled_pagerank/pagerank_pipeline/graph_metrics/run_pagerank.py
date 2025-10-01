@@ -123,7 +123,7 @@ class PageRank:
         """
         return pl.DataFrame(
             {
-                'dimensions_publication_id': self.get_hashed_ids(g, hash_map),
+                'id': self.get_hashed_ids(g, hash_map),
                 'page_rank': self.get_pagerank_scores(g, page_rank_scores),
                 'in_degree': self.get_in_degree(g),
                 'out_degree': self.get_out_degree(g),

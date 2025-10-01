@@ -43,11 +43,6 @@ def parse_args():
         help='Column name for out degree',
     )
     parser.add_argument(
-        '--date',
-        default='date',
-        help='Column name for date',
-    )
-    parser.add_argument(
         '--aggregation',
         default='quarter',
         help='Aggregation period for time normalisation',
@@ -92,6 +87,46 @@ def parse_args():
         action='store_true',
         help='Run pipeline in test mode (PRE year=2000, test bucket)',
     )
+    parser.add_argument(
+        '--info-publication-id',
+        default='id',
+        help='Publication ID field for the info data',
+    )
+    parser.add_argument(
+        '--edge-publication-id-target',
+        default='pub_id',
+        help='Publication ID field for the target in the edge data',
+    )
+    parser.add_argument(
+        '--edge-publication-id-source',
+        default='references',
+        help='Publication ID field for the source in the edge data',
+    )
+    parser.add_argument(
+        '--info-date-field',
+        default='publication_date',
+        help='Date field for the info data',
+    )
+    parser.add_argument(
+        '--info-publication-type-field',
+        default='publication_type',
+        help='Publication type field for the info data',
+    )
+    parser.add_argument(
+        '--publication-type-value',
+        default='article',
+        help='Value to filter the publication type field on',
+    )
+    parser.add_argument(
+        '--edge_local_path',
+        default='data/processed_edge_data.parquet',
+        help='Local path to store processed edge data',
+    )
+    parser.add_argument(
+        '--info_local_path',
+        default='data/processed_info_data.parquet',
+        help='Local path to store processed info data',
+    )
     return parser.parse_args()
 
 
@@ -103,13 +138,11 @@ def save_to_s3(df, path):
 def clean_df(df):
     df = df.select(
         [
-            'dimensions_publication_id',
+            'id',
             'page_rank',
             'in_degree',
             'out_degree',
-            'relative_citation_ratio',
-            'for',
-            'date',
+            args.info_date_field,
             'rescaled_pr',
             'nn_rescaled_pr',
         ]
@@ -131,10 +164,10 @@ async def main(args):
     base = args.output_base_path.rstrip('/')
     run_dir = f'{base}/{ts}'
     if args.test:
-        info_prefix = (
-            'dimensions_2024_04/nodes/publications/publications/article/year=2000/'
+        info_prefix = 'dimensions_2025_05/publications/output/0/publications/0.parquet'
+        edges_prefix = (
+            'dimensions_2025_05/publications/output/0/pubs_references/0.parquet'
         )
-        edges_prefix = 'dimensions_2024_04/edges/Publication_CITED_BY_Publication/Article/CITED_BY_2000_*.parquet'
         full_output_path = f'{run_dir}/test/pr_norm_full.parquet'
         clean_output_path = f'{run_dir}/test/pr_norm_clean.parquet'
         non_norm_output_path = f'{run_dir}/test/pr_non_norm.parquet'
@@ -150,13 +183,18 @@ async def main(args):
         info_prefix=info_prefix,
         edges_prefix=edges_prefix,
         chunks=16,
-        edge_path='data/processed_edge_data.parquet',
-        info_path='data/processed_info_data.parquet',
+        edge_path=args.edge_local_path,
+        info_path=args.info_local_path,
         save_locally=args.save_locally,
         date_cutoff=args.date_cutoff,
+        info_publication_id=args.info_publication_id,
+        edge_publication_id_target=args.edge_publication_id_target,
+        edge_publication_id_source=args.edge_publication_id_source,
+        info_date_field=args.info_date_field,
+        info_publication_type_field=args.info_publication_type_field,
+        publication_type_value=args.publication_type_value,
     )
     df, info_df = await load_data(handler, args.resume_locally)
-
     pagerank_processor = PageRank(
         df=df,
         iterations=args.iterations,
@@ -165,13 +203,13 @@ async def main(args):
     )
     df = pagerank_processor.process_pagerank()
     if df is not None:
-        df = df.join(info_df, on='dimensions_publication_id')
+        df = df.join(info_df, on='id')
 
     if args.time_normalise:
         normaliser = TimeNormalise(
             df,
             out_degree=args.out_degree,
-            date=args.date,
+            date=args.info_date_field,
             aggregation=args.aggregation,
             field=args.field,
             filter_out_degree=args.filter_out_degree,

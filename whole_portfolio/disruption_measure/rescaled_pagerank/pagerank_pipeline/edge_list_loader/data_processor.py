@@ -31,6 +31,12 @@ class PageRankDataProcessor:
         info_path=None,
         save_locally=False,
         date_cutoff=None,
+        info_publication_id='id',
+        edge_publication_id_target='pub_id',
+        edge_publication_id_source='references',
+        info_date_field='publication_date',
+        info_publication_type_field='publication_type',
+        publication_type_value='publication',
     ):
         """Initializes the data processor
 
@@ -54,9 +60,16 @@ class PageRankDataProcessor:
         self.info_df = None
         self.df = None
         self.date_cutoff = date_cutoff
+        self.info_publication_id = info_publication_id
+        self.edge_publication_id_source = edge_publication_id_target
+        self.edge_publication_id_target = edge_publication_id_source
+        self.info_date_field = info_date_field
+        self.info_publication_type_field = info_publication_type_field
+        self.publication_type_value = publication_type_value
 
     async def load_publication_info(self):
         """Loads the publication info dataframe"""
+        print(self.info_prefix)
         data_loader = AsyncS3DataLoader(
             prefix=self.info_prefix,
             chunks=self.chunks,
@@ -79,8 +92,7 @@ class PageRankDataProcessor:
 
         self.df = await data_loader.async_chunk_run()
 
-    @staticmethod
-    def pub_info_polars_args(df):
+    def pub_info_polars_args(self, df):
         """Defines specific polars args used for pagerank info dataset.
         Types are handled via cast due to some inconsistencies
         in the bulk extract. Data as pl.String to allow for later
@@ -92,20 +104,16 @@ class PageRankDataProcessor:
         Returns:
             df - A filtered polars dataframe
         """
-        return df.select(
+        return df.filter(
+            pl.col(self.info_publication_type_field) == self.publication_type_value
+        ).select(
             [
-                pl.col('dimensions_publication_id').cast(pl.String, strict=False),
-                pl.col('times_cited').cast(pl.Int64, strict=False),
-                pl.col('relative_citation_ratio').cast(pl.Float64, strict=False),
-                pl.col('for').cast(pl.String, strict=False),
-                pl.col('rac').cast(pl.String, strict=False),
-                pl.col('date').cast(pl.String, strict=False),
-                pl.col('publication_type').cast(pl.String, strict=False),
+                pl.col(self.info_publication_id).cast(pl.String, strict=False),
+                pl.col(self.info_date_field).cast(pl.String, strict=False),
             ]
         )
 
-    @staticmethod
-    def graph_data_polars_args(df):
+    def graph_data_polars_args(self, df):
         """Defines polars args used for pagerank edge list
 
         Args:
@@ -114,8 +122,11 @@ class PageRankDataProcessor:
         Returns:
             df - A filtered polars dataframe
         """
-        return df.filter(pl.col('type') == 'publication').select(
-            [pl.col('dimensions_publication_id'), pl.col('dimensions_publication_id1')]
+        return df.select(
+            [
+                pl.col(self.edge_publication_id_source),
+                pl.col(self.edge_publication_id_target),
+            ]
         )
 
     @staticmethod
@@ -142,11 +153,11 @@ class PageRankDataProcessor:
     def clean_date(self):
         """Cleans date calling fill_date and converting output to pl.Date col"""
         self.info_df = self.info_df.with_columns(
-            pl.col('date')
+            pl.col(self.info_date_field)
             .map_elements(self.fill_date, return_dtype=pl.Utf8)
             .str.strptime(pl.Date, '%Y-%m-%d', strict=False)
-            .alias('date')
-        ).drop_nulls(subset=pl.col('date'))
+            .alias(self.info_date_field)
+        ).drop_nulls(subset=pl.col(self.info_date_field))
 
     def filter_date_cutoff(self):
         """Filters the dataframe to only include publications before a certain date."""
@@ -160,10 +171,10 @@ class PageRankDataProcessor:
         """Keeps only edges which can be linked to publications defined in
         the info set. Practical effect of keeping only research articles.
         """
-        filter_ids = self.info_df.get_column('dimensions_publication_id')
+        filter_ids = self.info_df.get_column(self.info_publication_id)
         self.df = self.df.filter(
-            (pl.col('dimensions_publication_id').is_in(filter_ids))
-            | (pl.col('dimensions_publication_id1').is_in(filter_ids))
+            (pl.col(self.edge_publication_id_source).is_in(filter_ids))
+            | (pl.col(self.edge_publication_id_target).is_in(filter_ids))
         )
 
     def remove_edges_before_publish_date(self):
@@ -172,30 +183,35 @@ class PageRankDataProcessor:
         graph acyclic. Still check later with graph-tool is_DAG.
         """
         self.df = self.df.join(
-            self.info_df[['dimensions_publication_id', 'date']],
-            left_on='dimensions_publication_id',
-            right_on='dimensions_publication_id',
+            self.info_df[[self.info_publication_id, self.info_date_field]],
+            left_on=self.edge_publication_id_target,
+            right_on=self.info_publication_id,
             how='left',
         )
 
         info_df_copy = self.info_df.clone().rename(
             {
-                'dimensions_publication_id': 'dimensions_publication_id1',
-                'date': 'date_1',
+                self.info_publication_id: f'{self.info_publication_id}1',
+                self.info_date_field: f'{self.info_date_field}1',
             }
         )
 
         self.df = self.df.join(
-            info_df_copy[['dimensions_publication_id1', 'date_1']],
-            left_on='dimensions_publication_id1',
-            right_on='dimensions_publication_id1',
+            info_df_copy[[f'{self.info_publication_id}1', f'{self.info_date_field}1']],
+            left_on=self.edge_publication_id_source,
+            right_on=f'{self.info_publication_id}1',
             how='left',
         )
 
-        self.df = self.df.filter(pl.col('date') < pl.col('date_1'))
+        self.df = self.df.filter(
+            pl.col(self.info_date_field) < pl.col(f'{self.info_date_field}1')
+        )
 
         self.df = self.df.select(
-            [pl.col('dimensions_publication_id'), pl.col('dimensions_publication_id1')]
+            [
+                pl.col(self.edge_publication_id_source),
+                pl.col(self.edge_publication_id_target),
+            ]
         )
 
     @staticmethod
@@ -224,8 +240,8 @@ class PageRankDataProcessor:
         """
         self.df = self.df.select(
             [
-                pl.col('dimensions_publication_id1').alias('source'),
-                pl.col('dimensions_publication_id').alias('target'),
+                pl.col(self.edge_publication_id_source).alias('source'),
+                pl.col(self.edge_publication_id_target).alias('target'),
             ]
         )
 
@@ -242,19 +258,21 @@ class PageRankDataProcessor:
         """
         await self.load_publication_info()
         await self.load_graph_data()
+        print(self.info_df)
         self.clean_date()
+        print(self.info_df)
         if self.date_cutoff:
             self.filter_date_cutoff()
         self.filter_set()
         self.remove_edges_before_publish_date()
         self.df = PageRankDataProcessor.ids_to_numeric(
-            self.df, 'dimensions_publication_id'
+            self.df, self.edge_publication_id_target
         )
         self.df = PageRankDataProcessor.ids_to_numeric(
-            self.df, 'dimensions_publication_id1'
+            self.df, self.edge_publication_id_source
         )
         self.info_df = PageRankDataProcessor.ids_to_numeric(
-            self.info_df, 'dimensions_publication_id'
+            self.info_df, self.info_publication_id
         )
         self.define_source_target()
         if self.save_locally:
