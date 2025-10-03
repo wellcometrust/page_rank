@@ -11,7 +11,7 @@ from .graph_metrics.time_normalise import TimeNormalise
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Run the PageRank pipeline')
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         '--resume-locally',
         action='store_true',
@@ -74,12 +74,12 @@ def parse_args():
     )
     parser.add_argument(
         '--info-prefix',
-        default='dimensions_2024_04/nodes/publications/publications/article/',
+        default='dimensions_2025_05/publications/output/*/publications/*.parquet',
         help='S3 prefix for the info data',
     )
     parser.add_argument(
         '--edges-prefix',
-        default='dimensions_2024_04/edges/Publication_CITED_BY_Publication/Article/',
+        default='dimensions_2025_05/publications/output/*/pubs_references/*.parquet',
         help='S3 prefix for the edges data',
     )
     parser.add_argument(
@@ -164,9 +164,9 @@ async def main(args):
     base = args.output_base_path.rstrip('/')
     run_dir = f'{base}/{ts}'
     if args.test:
-        info_prefix = 'dimensions_2025_05/publications/output/0/publications/0.parquet'
+        info_prefix = 'dimensions_2025_05/publications/output/*/publications/0.parquet'
         edges_prefix = (
-            'dimensions_2025_05/publications/output/0/pubs_references/0.parquet'
+            'dimensions_2025_05/publications/output/*/pubs_references/0.parquet'
         )
         full_output_path = f'{run_dir}/test/pr_norm_full.parquet'
         clean_output_path = f'{run_dir}/test/pr_norm_clean.parquet'

@@ -21,10 +21,11 @@ Also included is a `pyproject.toml` file. This enables usage of this project as 
 ```bash
 uv pip install -e whole_portfolio/disruption_measure
 ```
-All dependencies will be installed automatically, and different files can be imported for example:
-```python
-from async_loader import data_loader
+Alternatively you can install directly from github using:
 ```
+uv add git+https://github.com/wellcometrust/impact_measures.git#subdirectory=whole_portfolio/disruption_measure/rescaled_pagerank
+```
+
 **Running PageRank will not work without the conda environment**. This is because of graph-tool, a compiled C++ package which is not on pypi, only conda-forge. You can optionally download and install from system package managers such as brew or apt and manage dependencies yourself. All other code can be run without the conda environment and fully managed by uv.
 
 ## How to run 
@@ -49,16 +50,3 @@ python -m whole_portfolio.disruption_measure.rescaled_pagerank.pagerank_pipeline
 ```
 
 In this example, I am running PageRank in test mode. I am using the --save-locally argument which saves the data after the initial processing step. Should I wish to alter any pagerank parameters after I can run again with the --resume-locally argument without having to reprocess the data.
-
-## UV usage
-
-First you need to install graph-tool via a package manager like Homebrew or apt:
-```bash
-brew install graph-tool
-```
-
-Then, you need to set the `PYTHONPATH` environment variable to include the path to the graph-tool Python bindings. You can do this by adding the following line to your shell configuration file (e.g., `~/.bashrc`, `~/.zshrc`, etc.):
-
-```bash
-export PYTHONPATH="/opt/homebrew/Cellar/graph-tool/2.98/libexec/lib/python3.13/site-packages:/opt/homebrew/Cellar/graph-tool/2.98/lib/python3.13/site-packages:$PYTHONPATH"
-``` 
