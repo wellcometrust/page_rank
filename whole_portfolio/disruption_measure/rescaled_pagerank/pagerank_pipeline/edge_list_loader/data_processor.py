@@ -258,9 +258,7 @@ class PageRankDataProcessor:
         """
         await self.load_publication_info()
         await self.load_graph_data()
-        print(self.info_df)
         self.clean_date()
-        print(self.info_df)
         if self.date_cutoff:
             self.filter_date_cutoff()
         self.filter_set()
