@@ -1,5 +1,4 @@
 import argparse
-import asyncio
 from datetime import datetime, timezone
 
 import awswrangler as wr
@@ -150,23 +149,23 @@ def clean_df(df):
     return df.drop_nulls(subset=[pl.col('rescaled_pr')])
 
 
-async def load_data(handler, resume_locally):
+def load_data(handler, resume_locally):
     if resume_locally:
         df = pl.read_parquet('data/processed_edge_data.parquet')
         info_df = pl.read_parquet('data/processed_info_data.parquet')
     else:
-        df, info_df = await handler.process_data()
+        df, info_df = handler.process_data()
     return df, info_df
 
 
-async def main(args):
+def main(args):
     ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     base = args.output_base_path.rstrip('/')
     run_dir = f'{base}/{ts}'
     if args.test:
-        info_prefix = 'dimensions_2025_05/publications/output/*/publications/0.parquet'
+        info_prefix = 'dimensions_2025_05/publications/output/0/publications/0.parquet'
         edges_prefix = (
-            'dimensions_2025_05/publications/output/*/pubs_references/0.parquet'
+            'dimensions_2025_05/publications/output/0/pubs_references/0.parquet'
         )
         full_output_path = f'{run_dir}/test/pr_norm_full.parquet'
         clean_output_path = f'{run_dir}/test/pr_norm_clean.parquet'
@@ -194,7 +193,8 @@ async def main(args):
         info_publication_type_field=args.info_publication_type_field,
         publication_type_value=args.publication_type_value,
     )
-    df, info_df = await load_data(handler, args.resume_locally)
+    df, info_df = load_data(handler, args.resume_locally)
+
     pagerank_processor = PageRank(
         df=df,
         iterations=args.iterations,
@@ -224,4 +224,4 @@ async def main(args):
 
 if __name__ == '__main__':
     args = parse_args()
-    asyncio.run(main(args=args))
+    main(args=args)
