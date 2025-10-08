@@ -92,14 +92,14 @@ def parse_args():
         help='Publication ID field for the info data',
     )
     parser.add_argument(
-        '--edge-publication-id-target',
+        '--edge-publication-id-citing',
         default='pub_id',
-        help='Publication ID field for the target in the edge data',
+        help='Publication ID field for the citing in the edge data',
     )
     parser.add_argument(
-        '--edge-publication-id-source',
+        '--edge-publication-id-cited',
         default='references',
-        help='Publication ID field for the source in the edge data',
+        help='Publication ID field for the cited in the edge data',
     )
     parser.add_argument(
         '--info-date-field',
@@ -187,8 +187,8 @@ def main(args):
         save_locally=args.save_locally,
         date_cutoff=args.date_cutoff,
         info_publication_id=args.info_publication_id,
-        edge_publication_id_target=args.edge_publication_id_target,
-        edge_publication_id_source=args.edge_publication_id_source,
+        edge_publication_id_cited=args.edge_publication_id_cited,
+        edge_publication_id_citing=args.edge_publication_id_citing,
         info_date_field=args.info_date_field,
         info_publication_type_field=args.info_publication_type_field,
         publication_type_value=args.publication_type_value,
