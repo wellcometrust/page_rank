@@ -3,12 +3,9 @@ import random
 
 import polars as pl
 
-from ..async_loader.data_loader import AsyncS3DataLoader
-
 
 class PageRankDataProcessor:
     """Processes data ready to be loaded into graph.
-    Works with AsyncS3DataLoader
 
     Attributes:
         info_prefix: str - AWS prefix for publication info used to filter edges
@@ -32,8 +29,8 @@ class PageRankDataProcessor:
         save_locally=False,
         date_cutoff=None,
         info_publication_id='id',
-        edge_publication_id_target='pub_id',
-        edge_publication_id_source='references',
+        edge_publication_id_citing='pub_id',
+        edge_publication_id_cited='references',
         info_date_field='publication_date',
         info_publication_type_field='publication_type',
         publication_type_value='publication',
@@ -61,36 +58,11 @@ class PageRankDataProcessor:
         self.df = None
         self.date_cutoff = date_cutoff
         self.info_publication_id = info_publication_id
-        self.edge_publication_id_source = edge_publication_id_target
-        self.edge_publication_id_target = edge_publication_id_source
+        self.edge_publication_id_citing = edge_publication_id_citing
+        self.edge_publication_id_cited = edge_publication_id_cited
         self.info_date_field = info_date_field
         self.info_publication_type_field = info_publication_type_field
         self.publication_type_value = publication_type_value
-
-    async def load_publication_info(self):
-        """Loads the publication info dataframe"""
-        print(self.info_prefix)
-        data_loader = AsyncS3DataLoader(
-            prefix=self.info_prefix,
-            chunks=self.chunks,
-            polars_args=self.pub_info_polars_args,
-            bucket_name=self.bucket_name,
-            tqdm_desc='publication info',
-        )
-
-        self.info_df = await data_loader.async_chunk_run()
-
-    async def load_graph_data(self):
-        """Loads the edge list needed for pagerank"""
-        data_loader = AsyncS3DataLoader(
-            prefix=self.edges_prefix,
-            chunks=self.chunks,
-            polars_args=self.graph_data_polars_args,
-            bucket_name=self.bucket_name,
-            tqdm_desc='edge list',
-        )
-
-        self.df = await data_loader.async_chunk_run()
 
     def pub_info_polars_args(self, df):
         """Defines specific polars args used for pagerank info dataset.
@@ -105,7 +77,9 @@ class PageRankDataProcessor:
             df - A filtered polars dataframe
         """
         return df.filter(
-            pl.col(self.info_publication_type_field) == self.publication_type_value
+            pl.col(self.info_publication_type_field).is_in(
+                [self.publication_type_value]
+            )
         ).select(
             [
                 pl.col(self.info_publication_id).cast(pl.String, strict=False),
@@ -124,8 +98,8 @@ class PageRankDataProcessor:
         """
         return df.select(
             [
-                pl.col(self.edge_publication_id_source),
-                pl.col(self.edge_publication_id_target),
+                pl.col(self.edge_publication_id_citing),
+                pl.col(self.edge_publication_id_cited),
             ]
         )
 
@@ -152,67 +126,86 @@ class PageRankDataProcessor:
 
     def clean_date(self):
         """Cleans date calling fill_date and converting output to pl.Date col"""
-        self.info_df = self.info_df.with_columns(
-            pl.col(self.info_date_field)
-            .map_elements(self.fill_date, return_dtype=pl.Utf8)
-            .str.strptime(pl.Date, '%Y-%m-%d', strict=False)
-            .alias(self.info_date_field)
-        ).drop_nulls(subset=pl.col(self.info_date_field))
+        if self.info_df is not None:
+            self.info_df = self.info_df.with_columns(
+                pl.col(self.info_date_field)
+                .map_elements(self.fill_date, return_dtype=pl.Utf8)
+                .str.strptime(pl.Date, '%Y-%m-%d', strict=False)
+                .alias(self.info_date_field)
+            ).drop_nulls(subset=self.info_date_field)
 
     def filter_date_cutoff(self):
         """Filters the dataframe to only include publications before a certain date."""
-        if self.date_cutoff is not None:
-            self.info_df = self.info_df.filter(
-                pl.col('date')
-                < pl.lit(self.date_cutoff).str.strptime(pl.Date, '%Y-%m-%d')
+        if self.date_cutoff is not None and self.info_df is not None:
+            cutoff = pl.lit(self.date_cutoff).str.strptime(pl.Date, '%Y-%m-%d')
+            date_col = (
+                '_min_date'
+                if '_min_date'
+                in (
+                    self.info_df.schema
+                    if isinstance(self.info_df, pl.LazyFrame)
+                    else self.info_df.columns
+                )
+                else self.info_date_field
+            )
+            self.info_df = self.info_df.filter(pl.col(date_col) < cutoff)
+
+    def prepare_min_date(self):
+        """Create a deterministic minimal date column (_min_date) from partial date strings.
+        This is used solely for temporal edge pruning to avoid randomness affecting DAG determination.
+        """
+        if self.info_df is not None:
+            year = pl.col(self.info_date_field).str.slice(0, 4)
+            month = pl.when(pl.col(self.info_date_field).str.len_chars() >= 7)
+            month = month.then(pl.col(self.info_date_field).str.slice(5, 2)).otherwise(
+                pl.lit('01')
+            )
+            day = pl.when(pl.col(self.info_date_field).str.len_chars() >= 10)
+            day = day.then(pl.col(self.info_date_field).str.slice(8, 2)).otherwise(
+                pl.lit('01')
             )
 
-    def filter_set(self):
-        """Keeps only edges which can be linked to publications defined in
-        the info set. Practical effect of keeping only research articles.
-        """
-        filter_ids = self.info_df.get_column(self.info_publication_id)
-        self.df = self.df.filter(
-            (pl.col(self.edge_publication_id_source).is_in(filter_ids))
-            | (pl.col(self.edge_publication_id_target).is_in(filter_ids))
-        )
+            self.info_df = self.info_df.with_columns(
+                (year + pl.lit('-') + month + pl.lit('-') + day)
+                .str.strptime(pl.Date, '%Y-%m-%d', strict=False)
+                .alias('_min_date')
+            )
 
     def remove_edges_before_publish_date(self):
         """This function removes impossible edges which exist due to
         data quality issues in the bulk extract. This should make the
         graph acyclic. Still check later with graph-tool is_DAG.
         """
-        self.df = self.df.join(
-            self.info_df[[self.info_publication_id, self.info_date_field]],
-            left_on=self.edge_publication_id_target,
-            right_on=self.info_publication_id,
-            how='left',
-        )
+        if self.info_df is not None and self.df is not None:
+            info_min = self.info_df.select(
+                [
+                    pl.col(self.info_publication_id).alias('pid'),
+                    pl.col('_min_date'),
+                ]
+            )
 
-        info_df_copy = self.info_df.clone().rename(
-            {
-                self.info_publication_id: f'{self.info_publication_id}1',
-                self.info_date_field: f'{self.info_date_field}1',
-            }
-        )
+            self.df = self.df.join(
+                info_min.rename({'pid': 'citing_pid', '_min_date': 'citing_min_date'}),
+                left_on=self.edge_publication_id_citing,
+                right_on='citing_pid',
+                how='inner',
+            ).join(
+                info_min.rename({'pid': 'cited_pid', '_min_date': 'cited_min_date'}),
+                left_on=self.edge_publication_id_cited,
+                right_on='cited_pid',
+                how='inner',
+            )
 
-        self.df = self.df.join(
-            info_df_copy[[f'{self.info_publication_id}1', f'{self.info_date_field}1']],
-            left_on=self.edge_publication_id_source,
-            right_on=f'{self.info_publication_id}1',
-            how='left',
-        )
+            self.df = self.df.filter(
+                pl.col('cited_min_date') < pl.col('citing_min_date')
+            )
 
-        self.df = self.df.filter(
-            pl.col(self.info_date_field) < pl.col(f'{self.info_date_field}1')
-        )
-
-        self.df = self.df.select(
-            [
-                pl.col(self.edge_publication_id_source),
-                pl.col(self.edge_publication_id_target),
-            ]
-        )
+            self.df = self.df.select(
+                [
+                    pl.col(self.edge_publication_id_citing),
+                    pl.col(self.edge_publication_id_cited),
+                ]
+            )
 
     @staticmethod
     def ids_to_numeric(df, column_name):
@@ -234,47 +227,58 @@ class PageRankDataProcessor:
         )
 
     def define_source_target(self):
-        """Explicitly defines source and target for graph construction.
-        PageRank needs to be a directed graph, however via a 'cites' not
-        'cited by' relationship i.e., reverse direction of the WAG
-        """
-        self.df = self.df.select(
-            [
-                pl.col(self.edge_publication_id_source).alias('source'),
-                pl.col(self.edge_publication_id_target).alias('target'),
-            ]
-        )
+        """Rename original id columns to generic source/target for graph construction."""
+        if self.df is not None:
+            self.df = self.df.rename(
+                {
+                    self.edge_publication_id_citing: 'source',
+                    self.edge_publication_id_cited: 'target',
+                }
+            )
 
-    async def process_data(self):
+    def process_data(self):
         """Methods to run data_processor:
         - load_publication_info
         - load_graph_data
-        - clean_date
-        - filter_date_cutoff
-        - removes not possible edges
+        - prepare_min_date & filter_date_cutoff (deterministic minimal date)
+        - removes not possible edges (using minimal dates)
+        - clean_date (random date augmentation applied AFTER pruning)
         - converts dimensions ids to numeric version
         - defines source and target for graph construction
         - optional saving of processed data
         """
-        await self.load_publication_info()
-        await self.load_graph_data()
-        self.clean_date()
+        self.info_df = pl.scan_parquet(f's3://datalabs-data/{self.info_prefix}')
+        self.df = pl.scan_parquet(f's3://datalabs-data/{self.edges_prefix}')
+
+        self.info_df = self.pub_info_polars_args(self.info_df)
+        self.df = self.graph_data_polars_args(self.df)
+
+        self.prepare_min_date()
         if self.date_cutoff:
             self.filter_date_cutoff()
-        self.filter_set()
+
         self.remove_edges_before_publish_date()
+
+        self.clean_date()
+
         self.df = PageRankDataProcessor.ids_to_numeric(
-            self.df, self.edge_publication_id_target
+            self.df, self.edge_publication_id_cited
         )
         self.df = PageRankDataProcessor.ids_to_numeric(
-            self.df, self.edge_publication_id_source
+            self.df, self.edge_publication_id_citing
         )
         self.info_df = PageRankDataProcessor.ids_to_numeric(
             self.info_df, self.info_publication_id
         )
+
         self.define_source_target()
+
+        self.info_df = self.info_df.collect(streaming=True)
+        self.df = self.df.collect(streaming=True)
         if self.save_locally:
-            os.makedirs(os.path.dirname(self.edge_path), exist_ok=True)
-            self.df.write_parquet(self.edge_path)
-            self.info_df.write_parquet(self.info_path)
+            if self.edge_path is not None:
+                os.makedirs(os.path.dirname(self.edge_path), exist_ok=True)
+                self.df.write_parquet(self.edge_path)
+            if self.info_path is not None:
+                self.info_df.write_parquet(self.info_path)
         return self.df, self.info_df
